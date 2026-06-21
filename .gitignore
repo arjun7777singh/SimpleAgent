@@ -1,0 +1,28 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+#The agent's sandbox directory -- generated content, not source
+agent_workspace/
+
+
+#Environment / secrets -- Never commit
+.env
+.env.local
+*.env.local
+
+
+# IDE
+.vscode/
+.idea/
+
+#OS junk
+.DS_Store
+Thumbs.db
