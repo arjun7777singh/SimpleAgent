@@ -78,6 +78,84 @@ class MCPBridge:
         self._connected = True
 
         return await self._register_tools()
+    
+    async def aclose(self) -> None:
+        """Shut down the session and terminate the server subprocess."""
+        await self._stack.aclose()
+        self._session = None
+        self._connected = False
+    
+    async def _register_tools(self)-> list[str]:
+        """Discover tools via MCP and add them to the registry."""
+        assert self._session is not None
+        listed = await self._session.list_tools()
+
+        registered: list[str] = []
+        for mcp_tool in listed.tools:
+            local_name = f"{self._name}__{mcp_tool.name}"
+            self._registry.register(
+                Tool(
+                    name=local_name,
+                    description=mcp_tool.description or f"MCP tool {mcp_tool.name}",
+                    parameters=_normalize_schema(mcp_tool.inputSchema),
+                    handler=self._make_handler(mcp_tool.name),
+
+                )
+            )
+            registered.append(local_name)
+        return registered
+    
+    async def _make_handler(self,remote_name:str):
+        """Build an async handler that calls one remote MCP tool by name."""
+        
+        async def handler(args: dict[str,Any])->str:
+            if self._session is None:
+                return "ERROR: MCP session is not connected."
+            result = await self._session.call_tool(remote_name, args)
+            return _extract_text(result)
+        
+        return handler
+    
+# -----------------------------------------------------------------------------#helpers
+
+def _normalize_schema(input_schema: dict[str, Any] | None)-> dict[str,Any]:
+    """Turn an MCP inputSchema into a valid OpenAI function-parameters object.
+    MCP inputSchema is already JSON Schema, so this is mostly a pass-through.
+    We only guarantee a usable object schema when the server omits one.
+    """
+    if not input_schema:
+        return {"type":"object", "properties":{}}
+    schema=dict(input_schema)
+    schema.setdefault("type","object")
+    schema.setdefault("properties",{})
+    return schema
+
+def _extract_text(result: Any)->str:
+    """Pull text out of a MCP CallToolResult's content blocks."""
+    # The SDK exposes `.content`: a list of content blocks. Text blocks have
+    # `.type == "text"` and a `.text` attribute. We join all the text blocks.
+    content = getattr(result, "content", None)
+    if not content:
+        return ""
+    
+    parts: list[str]=[]
+    for block in content:
+        text = getattr(block, "text", None)
+        if text is not None:
+            parts.append(text)
+        else:
+            # Non - text block (image, resource, ref, ...) - describe it.
+            parts.append(f"[non-text content: {getattr(block, 'type', 'unknown')}]")
+
+    text = "\n".join(parts)
+
+    # Surface tool-side errors clearly to the LLM.
+    if getattr(result, "isError", False):
+        return f"ERROR (from MCP tool): {text}"
+    return text
+
+
+
 
 
 
